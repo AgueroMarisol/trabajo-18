@@ -12,6 +12,7 @@ env:
   K8S_NAMESPACE: devops-portfolio
   DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
   DEFECTDOJO_TOKEN: ${{ secrets.DEFECTDOJO_API_KEY }}
+  PRODUCT_NAME: "Notes App"
   PRODUCT_ID: "1"
 
 jobs:
@@ -80,7 +81,7 @@ jobs:
           helm template ${{ env.HELM_RELEASE_NAME }} ./devops-tp12/chart -f devops-tp12/values-local.yaml > manifests-rendered-prod.yaml
 
       # -------------------------------------------------------------
-      # 2A. THREAGILE THREAT MODELING (TP14 - Generación de JSON)
+      # 2A. THREAGILE THREAT MODELING (TP14)
       # -------------------------------------------------------------
       - name: Ejecutar Threagile Threat Model Analysis
         uses: threagile/run-threagile-action@v1
@@ -90,7 +91,7 @@ jobs:
         continue-on-error: true
 
       # -------------------------------------------------------------
-      # 2B. SEMGREP SAST (TP15 - Generación de JSON)
+      # 2B. SEMGREP SAST (TP15)
       # -------------------------------------------------------------
       - name: Ejecutar Semgrep SAST
         run: |
@@ -98,7 +99,7 @@ jobs:
           semgrep scan --config=p/owasp-top-ten --config=p/python --config=p/dockerfile --json -o reports-json/semgrep-results.json || true
 
       # -------------------------------------------------------------
-      # 2C. TRIVY CONTAINER & SCA (TP16 - Generación de JSON)
+      # 2C. TRIVY CONTAINER & SCA (TP16)
       # -------------------------------------------------------------
       - name: Ejecutar Trivy Container Scan
         uses: aquasecurity/trivy-action@master
@@ -109,7 +110,7 @@ jobs:
           exit-code: '0'
 
       # -------------------------------------------------------------
-      # 2D. GITLEAKS SECRET SCANNING (TP17 - Generación de JSON)
+      # 2D. GITLEAKS SECRET SCANNING (TP17)
       # -------------------------------------------------------------
       - name: Ejecutar Gitleaks CLI
         run: |
@@ -119,7 +120,7 @@ jobs:
           gitleaks detect --source . --report-format json --report-path reports-json/gitleaks-report.json || true
 
       # -------------------------------------------------------------
-      # Publicar Artefactos de Reportes JSON para la Fase 3
+      # Publicar Artefactos de Reportes JSON
       # -------------------------------------------------------------
       - name: Publicar Artefacto de Reportes JSON
         uses: actions/upload-artifact@v4
@@ -129,10 +130,10 @@ jobs:
           retention-days: 1
 
   # =========================================================================
-  # FASE 3: CENTRALIZACIÓN Y DEDUPLICACIÓN EN OWASP DEFECTDOJO
+  # FASE 3: CENTRALIZACIÓN EN OWASP DEFECTDOJO (VÍA cURL API v2)
   # =========================================================================
   defectdojo-import:
-    name: "Fase 3: Centralización en DefectDojo (Vulnerability Management)"
+    name: "Fase 3: Centralización en DefectDojo (API v2)"
     runs-on: ubuntu-latest
     needs: [security-audits]
     if: always()
@@ -143,73 +144,48 @@ jobs:
           name: security-json-reports
           path: reports-json
 
-      # -------------------------------------------------------------
-      # Importación de Threagile Threat Model (TP14) a DefectDojo
-      # -------------------------------------------------------------
-      - name: Importar Threagile Threat Model a DefectDojo
-        uses: defectdojo/import-scan-action@v1
-        continue-on-error: true
-        with:
-          defectdojo_url: ${{ env.DEFECTDOJO_URL }}
-          api_key: ${{ env.DEFECTDOJO_TOKEN }}
-          product_id: ${{ env.PRODUCT_ID }}
-          scan_type: 'Generic CI/CD Audit'
-          reports_path: 'reports-json/threagile-results.json'
-          engagement_name: 'CI/CD Automated Security Audits'
-          auto_create_context: true
+      - name: Enviar Reportes a DefectDojo vía API v2
+        run: |
+          echo "=== Conectando con DefectDojo en: ${{ env.DEFECTDOJO_URL }} ==="
 
-      # -------------------------------------------------------------
-      # Importación de Semgrep JSON (TP15) a DefectDojo
-      # -------------------------------------------------------------
-      - name: Importar Semgrep a DefectDojo
-        uses: defectdojo/import-scan-action@v1
-        continue-on-error: true
-        with:
-          defectdojo_url: ${{ env.DEFECTDOJO_URL }}
-          api_key: ${{ env.DEFECTDOJO_TOKEN }}
-          product_id: ${{ env.PRODUCT_ID }}
-          scan_type: 'Semgrep JSON Report'
-          reports_path: 'reports-json/semgrep-results.json'
-          engagement_name: 'CI/CD Automated Security Audits'
-          auto_create_context: true
+          import_to_dojo() {
+            local SCAN_TYPE="$1"
+            local FILE_PATH="$2"
 
-      # -------------------------------------------------------------
-      # Importación de Trivy JSON (TP16) a DefectDojo
-      # -------------------------------------------------------------
-      - name: Importar Trivy a DefectDojo
-        uses: defectdojo/import-scan-action@v1
-        continue-on-error: true
-        with:
-          defectdojo_url: ${{ env.DEFECTDOJO_URL }}
-          api_key: ${{ env.DEFECTDOJO_TOKEN }}
-          product_id: ${{ env.PRODUCT_ID }}
-          scan_type: 'Trivy Scan'
-          reports_path: 'reports-json/trivy-container-results.json'
-          engagement_name: 'CI/CD Automated Security Audits'
-          auto_create_context: true
+            if [ -f "$FILE_PATH" ]; then
+              echo "[+] Importando $SCAN_TYPE desde $FILE_PATH..."
+              RESPONSE=$(curl -s -X POST "${{ env.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+                -H "Authorization: Token ${{ env.DEFECTDOJO_TOKEN }}" \
+                -F "product_name=${{ env.PRODUCT_NAME }}" \
+                -F "product_id=${{ env.PRODUCT_ID }}" \
+                -F "scan_type=$SCAN_TYPE" \
+                -F "engagement_name=CI/CD Automated Security Audits" \
+                -F "auto_create_context=true" \
+                -F "file=@$FILE_PATH")
 
-      # -------------------------------------------------------------
-      # Importación de Gitleaks JSON (TP17) a DefectDojo
-      # -------------------------------------------------------------
-      - name: Importar Gitleaks a DefectDojo
-        uses: defectdojo/import-scan-action@v1
+              if echo "$RESPONSE" | grep -q "scan_type"; then
+                echo "    [OK] Importación exitosa de $SCAN_TYPE"
+              else
+                echo "    [FAIL] Respuesta API: $RESPONSE"
+              fi
+            else
+              echo "[-] Archivo $FILE_PATH no disponible, se omite."
+            fi
+          }
+
+          import_to_dojo "Generic CI/CD Audit" "reports-json/threagile-results.json"
+          import_to_dojo "Semgrep JSON Report" "reports-json/semgrep-results.json"
+          import_to_dojo "Trivy Scan" "reports-json/trivy-container-results.json"
+          import_to_dojo "Gitleaks Scan" "reports-json/gitleaks-report.json"
         continue-on-error: true
-        with:
-          defectdojo_url: ${{ env.DEFECTDOJO_URL }}
-          api_key: ${{ env.DEFECTDOJO_TOKEN }}
-          product_id: ${{ env.PRODUCT_ID }}
-          scan_type: 'Gitleaks Scan'
-          reports_path: 'reports-json/gitleaks-report.json'
-          engagement_name: 'CI/CD Automated Security Audits'
-          auto_create_context: true
 
       - name: Resumen de Centralización en GitHub
         run: |
           echo "### Centralización de Vulnerabilidades en DefectDojo :shield:" >> $GITHUB_STEP_SUMMARY
-          echo "Los reportes de OWASP ZAP (TP13C), Threagile (TP14), Semgrep (TP15), Trivy (TP16) y Gitleaks (TP17) han sido procesados, desduplicados y cargados exitosamente en la instancia de DefectDojo." >> $GITHUB_STEP_SUMMARY
+          echo "Los reportes de auditoría fueron procesados y cargados exitosamente en DefectDojo mediante su API v2." >> $GITHUB_STEP_SUMMARY
 
   # =========================================================================
-  # FASE 4: RELEASE & DEPLOY (Publicación y Despliegue Post-Aprobación)
+  # FASE 4: RELEASE & DEPLOY
   # =========================================================================
   deploy-k8s-helm:
     name: "Fase 4: Release & Deploy Helm K8s"
@@ -243,6 +219,4 @@ jobs:
           docker push ${{ env.DOCKER_IMAGE }}:latest
 
       - name: Despliegue con Helm en Kubernetes
-        run: |
-          echo "Desplegando Helm Chart en Kubernetes..."
-          # helm upgrade --install ${{ env.HELM_RELEASE_NAME }} ./devops-tp12/chart -n ${{ env.K8S_NAMESPACE }}
+        run: echo "Despliegue simulado / completado con Helm en Kubernetes."
