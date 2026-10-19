@@ -1,21 +1,38 @@
-## TP16 — Escaneo de Seguridad de Contenedores, Dependencias e IaC con Trivy (Pipeline 3 Fases)
+## TP18 — Gestión Centralizada de Vulnerabilidades con OWASP DefectDojo
 
-Integración de **Trivy** en la fábrica de software (CI/CD) aplicando la arquitectura de **3 Fases con Paso de Artefactos** y la resolución de falsos positivos mediante el patrón **Render First (TP10B)**.
+Integración de **OWASP DefectDojo Community Edition** para consolidar, desduplicar y auditar los hallazgos de ciberseguridad provenientes de OWASP ZAP (DAST), Threagile (Threat Modeling), Semgrep (SAST), Trivy (SCA/Container/IaC) y Gitleaks (Secret Scanning).
 
-### Matriz de Control e Integración (Formato CSV)
-```csv
-Fase / Job;Dominio Evaluado;Severidades;Exit Code;Acción ante Hallazgos;Evidencia
-Fase 1: build-and-package;Compilación Docker;-;0;Exporta app-image.tar como artefacto;Artefacto en GitHub Actions
-Fase 2A: trivy-andon-cord;SCA, Contenedor e IaC Renderizado (TP10B);HIGH, CRITICAL;1;Andon Cord: Detiene el pipeline y bloquea el despliegue;Resumen en $GITHUB_STEP_SUMMARY
-Fase 2B: trivy-audit-report;Contenedores y Dependencias;LOW, MEDIUM;0;Informativo: Genera reporte de inspección;Artifact descargable + $GITHUB_STEP_SUMMARY
-Fase 3: deploy-k8s-helm;Publicación y Despliegue;-;0;Promueve la imagen aprobada a Docker Hub y Helm;Release en Kubernetes
-Comandos de Auditoría Local
-# 1. Auditoría SCA
-trivy fs ./backend
+### Arquitectura de Integración en 4 Fases
 
-# 2. Auditoría de Imagen
-trivy image devops-portfolio:latest
+Fase;Herramienta;Función;Mecanismo
+Fase 1;Docker Buildx;Compilación inmutable;Exporta app-image.tar
+Fase 2;OWASP ZAP / Threagile / Semgrep / Trivy / Gitleaks;Auditoría multidominio;Genera reportes JSON/XML estructurados
+Fase 3;OWASP DefectDojo;Vulnerability Management;Ingestión vía API v2 y deduplicación
+Fase 4;Helm & K8s;Despliegue a producción;Release verificado en Kubernetes
 
-# 3. Renderizado previo e IaC Scanning (TP10B)
-helm template mi-app ./devops-portfolio -f devops-portfolio/values-prod.yaml > manifests-rendered-prod.yaml
-trivy config manifests-rendered-prod.yaml
+---- Visualizacion en Word como tabla ---
+Fase
+Herramienta
+Función
+Mecanismo
+1
+Docker Buildx
+Compilación inmutable
+Exporta app-image.tar
+2
+OWASP ZAP / Threagile / Semgrep / Trivy / Gitleaks
+Auditoría multidominio
+Genera reportes JSON/XML estructurados
+3
+OWASP DefectDojo
+Vulnerability Management
+Ingestión vía API v2 y deduplicación
+4
+Helm & K8s
+Despliegue a producción
+Release verificado en Kubernetes
+
+Comandos de Verificación Local
+# Otorgar permisos y ejecutar script de carga a DefectDojo
+chmod +x scripts/verificar-defectdojo.sh
+DEFECTDOJO_URL="http://localhost:8080" DEFECTDOJO_API_KEY="tu_token" ./scripts/verificar-defectdojo.sh
